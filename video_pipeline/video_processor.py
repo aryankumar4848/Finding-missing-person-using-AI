@@ -120,3 +120,52 @@ class VideoProcessor:
             yield frame_results
             
         cap.release()
+
+    def draw_debug_overlay(self, frame: np.ndarray, matched_entities: list) -> np.ndarray:
+        """
+        Applies mathematical bounding boxes and strictly displays metrics.
+        matched_entities expects a list of dictionaries with matching ML states.
+        """
+        out_frame = frame.copy()
+        
+        for entity in matched_entities:
+            bbox = entity.get("bbox")
+            if bbox is None:
+                continue
+                
+            x1, y1, x2, y2 = map(int, bbox)
+            status = entity.get("status", "rejected")
+            track_id = entity.get("track_id", "?")
+            identity = entity.get("identity", "Unknown")
+            sim = entity.get("similarity", 0.0)
+            unc = entity.get("uncertainty", 0.0)
+            cons = entity.get("consistency", 0)
+            
+            # Color formulation
+            if status == "accepted":
+                color = (0, 255, 0) # Green (BGR OpenCV layout)
+            elif status == "warming_up":
+                color = (0, 165, 255) # Orange 
+            else:
+                color = (0, 0, 255) # Red (rejected / unknown bounds)
+                identity = "Unknown"
+                
+            # 1. Bounding Box
+            cv2.rectangle(out_frame, (x1, y1), (x2, y2), color, 2)
+            
+            # Typography config
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            
+            # 2. Track ID banner above box
+            cv2.putText(out_frame, f"ID: {track_id} | {identity}", (x1, max(y1 - 10, 20)), font, 0.6, color, 2)
+            
+            # 3. Floating Math Metrics mapping underneath the bounding box structurally
+            metrics_y = y2 + 20
+            if status != "warming_up":
+                cv2.putText(out_frame, f"S: {sim:.2f}", (x1, metrics_y), font, 0.5, (255, 255, 255), 1)
+                cv2.putText(out_frame, f"U: {unc:.3f}", (x1, metrics_y + 20), font, 0.5, (255, 255, 255), 1)
+                cv2.putText(out_frame, f"C: {cons}/15", (x1, metrics_y + 40), font, 0.5, (255, 255, 255), 1)
+            else:
+                cv2.putText(out_frame, "C: Warming Up Buffer...", (x1, metrics_y), font, 0.5, (0, 255, 255), 1)
+
+        return out_frame

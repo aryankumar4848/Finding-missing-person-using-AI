@@ -53,19 +53,17 @@ class PipelineTester:
                 break
                 
             frame_idx += 1
-            
-            # Step 1: Execute Video Processor (Mesh -> Tracking -> Normalization -> BioHashing -> Temporal Cache)
             tracked_faces = self.video_processor.process_frame(frame)
             
-            if not tracked_faces:
-                continue
-
-            print(f"--- FRAME {frame_idx} ---")
+            # Dictionary collector for Graphics processing
+            display_payloads = []
             
-            # Step 2: Extract from Matcher evaluating strict Phase 3 criteria
             for track_id, data in tracked_faces.items():
+                bbox = data['bbox']
                 if not data['is_valid']:
-                    print(f"  Track ID {track_id} | Extractor Failed (Likely fully occluded/coasting)")
+                    display_payloads.append({
+                        "track_id": track_id, "bbox": bbox, "status": "rejected", "identity": "Unknown"
+                    })
                     continue
                     
                 buffer = self.video_processor.buffer.get_buffer(track_id)
@@ -76,15 +74,19 @@ class PipelineTester:
                 latest_hash = latest_frame['hash']
                 latest_mesh = latest_frame['mesh']
                 
-                # Fetch dynamically bounded mathematical stabilities across sliding window
                 weights = latest_frame.get('visibilities', {k: 1.0 for k in latest_hash.keys()})
                 var_temporal = self.video_processor.buffer.compute_temporal_variance(track_id)
                 consistency = self.video_processor.buffer.compute_consistency(track_id)
                 
-                # Match against local disk Cache
+                # Minimum array validation checking Temporal Warmup
+                if len(buffer) < 5: 
+                    display_payloads.append({
+                         "track_id": track_id, "bbox": bbox, "status": "warming_up", "identity": "Unknown"
+                    })
+                    continue
+                
                 best_id, sim, db_hash = self.matcher.find_best_match(latest_hash, weights, self.db_records)
                 
-                # Maintain temporal validation feedback loop structure required by consistency metric
                 if best_id is not None:
                     self.video_processor.buffer.buffers[track_id][-1]['similarity'] = sim
                     var_pert = self.uncertainty.compute_perturbation_variance(latest_mesh, self.video_processor.hasher, db_hash, weights)
@@ -92,17 +94,33 @@ class PipelineTester:
                     decision = self.matcher.evaluate_identity(best_id, sim, var_temporal, var_pert, consistency)
                     
                     final_id = decision['match_id'] if decision['match_id'] else "Unknown"
-                    print(f"  Track ID: {track_id}")
-                    print(f"  Matched Identity: {final_id}")
-                    print(f"  Similarity Score: {sim:.3f}")
-                    print(f"  Uncertainty Score: {decision['uncertainty']:.4f}")
-                    print(f"  Consistency Score: {consistency}/15")
-                    if final_id == "Unknown":
-                        print(f"  REJECT REASON: {decision['details']}")
+                    
+                    display_payloads.append({
+                         "track_id": track_id, 
+                         "bbox": bbox, 
+                         "status": "accepted" if final_id != "Unknown" else "rejected",
+                         "identity": final_id,
+                         "similarity": sim,
+                         "uncertainty": decision['uncertainty'],
+                         "consistency": consistency
+                    })
                 else:
-                    print(f"  Track ID: {track_id} | Matched Identity: Unknown | No close topology found.")
+                    display_payloads.append({
+                         "track_id": track_id, "bbox": bbox, "status": "rejected", "identity": "Unknown"
+                    })
+
+            # Generates the graphical video rendering natively via OpenCV
+            output_frame = self.video_processor.draw_debug_overlay(frame, display_payloads)
+            
+            # Render Window
+            cv2.imshow("Privacy-Preserving Temporal Identification", output_frame)
+            
+            # Poll keyboard for termination
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
         self.cap.release()
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     # Can substitute 0 mechanically for the system webcam
