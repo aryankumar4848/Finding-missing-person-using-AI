@@ -66,9 +66,14 @@ class PipelineTester:
             for track_id, data in tracked_faces.items():
                 bbox = data['bbox']
                 if not data['is_valid']:
-                    display_payloads.append({
-                        "track_id": track_id, "bbox": bbox, "status": "rejected", "identity": "Unknown"
-                    })
+                    if data.get('reason') == 'low_res_face':
+                        display_payloads.append({
+                            "track_id": track_id, "bbox": bbox, "status": "low_res_face", "identity": "Unknown"
+                        })
+                    else:
+                        display_payloads.append({
+                            "track_id": track_id, "bbox": bbox, "status": "unknown", "identity": "Unknown"
+                        })
                     continue
                     
                 buffer = self.video_processor.buffer.get_buffer(track_id)
@@ -111,7 +116,7 @@ class PipelineTester:
                         if decision.get('details') and "Uncertainty" in decision['details']:
                             status = "rejected_high_uncertainty"
                         else:
-                            status = "no_match"
+                            status = "unknown"
                             
                     display_payloads.append({
                          "track_id": track_id, 
@@ -124,7 +129,7 @@ class PipelineTester:
                     })
                 else:
                     display_payloads.append({
-                         "track_id": track_id, "bbox": bbox, "status": "no_match", "identity": "Unknown"
+                         "track_id": track_id, "bbox": bbox, "status": "unknown", "identity": "Unknown"
                     })
 
             # Generates the graphical video rendering natively via OpenCV
