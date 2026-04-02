@@ -1,4 +1,4 @@
-#!/Users/aryan/Documents/MajorProject/venv/bin/python
+#!/Users/aryan/Documents/MajorProject/venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

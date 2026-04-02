@@ -11,7 +11,8 @@ class PipelineTester:
     Executes the End-to-End local validation of the Real-time Video Processor logic.
     Mocks FastAPI streaming entirely inside the console.
     """
-    def __init__(self, source=0):
+    def __init__(self, source=0, debug=True):
+        self.debug = debug
         # Allow initializing from a local mp4 file or directly tapping the system webcam
         self.source = source
         self.cap = cv2.VideoCapture(self.source)
@@ -37,7 +38,7 @@ class PipelineTester:
 
     def start_loop(self):
         if not self.cap.isOpened():
-            print(f"Error: Unable to explicitly open video source: {self.source}")
+            print(f"Error: Unable to explicitly open video source: {self.source}. Camera not accessible.")
             return
             
         print("\n=== STARTING REAL-TIME TRACKING INGESTION ===")
@@ -49,11 +50,15 @@ class PipelineTester:
         while True:
             ret, frame = self.cap.read()
             if not ret:
-                print("End of video stream reached.")
+                print("Error: Frame read failure. End of video stream reached.")
                 break
                 
             frame_idx += 1
             tracked_faces = self.video_processor.process_frame(frame)
+            
+            if self.debug:
+                faces_detected = getattr(self.video_processor, 'last_mesh_count', 0)
+                print(f"Frame {frame_idx}: Detected {faces_detected} faces, Active Tracks: {len(tracked_faces)}")
             
             # Dictionary collector for Graphics processing
             display_payloads = []
@@ -88,6 +93,11 @@ class PipelineTester:
                 best_id, sim, db_hash = self.matcher.find_best_match(latest_hash, weights, self.db_records)
                 
                 if best_id is not None:
+                    if self.debug:
+                        mesh_shape = getattr(latest_mesh, "shape", "Unknown")
+                        hash_sizes = {k: len(v) for k,v in latest_hash.items()}
+                        print(f"DEBUG: Mesh shape: {mesh_shape}, Hash sizes: {hash_sizes}, Raw Similarity: {sim:.4f}")
+
                     self.video_processor.buffer.buffers[track_id][-1]['similarity'] = sim
                     var_pert = self.uncertainty.compute_perturbation_variance(latest_mesh, self.video_processor.hasher, db_hash, weights)
                     
@@ -95,10 +105,18 @@ class PipelineTester:
                     
                     final_id = decision['match_id'] if decision['match_id'] else "Unknown"
                     
+                    if final_id != "Unknown":
+                        status = "accepted"
+                    else:
+                        if decision.get('details') and "Uncertainty" in decision['details']:
+                            status = "rejected_high_uncertainty"
+                        else:
+                            status = "no_match"
+                            
                     display_payloads.append({
                          "track_id": track_id, 
                          "bbox": bbox, 
-                         "status": "accepted" if final_id != "Unknown" else "rejected",
+                         "status": status,
                          "identity": final_id,
                          "similarity": sim,
                          "uncertainty": decision['uncertainty'],
@@ -106,7 +124,7 @@ class PipelineTester:
                     })
                 else:
                     display_payloads.append({
-                         "track_id": track_id, "bbox": bbox, "status": "rejected", "identity": "Unknown"
+                         "track_id": track_id, "bbox": bbox, "status": "no_match", "identity": "Unknown"
                     })
 
             # Generates the graphical video rendering natively via OpenCV
@@ -124,6 +142,6 @@ class PipelineTester:
 
 if __name__ == "__main__":
     # Can substitute 0 mechanically for the system webcam
-    tester = PipelineTester(source=0)
-    # tester.start_loop() # Commented dynamically to prevent blocking execution without a monitor
-    print("Script correctly generated. To test physically on your local OSX machine with a GUI, run: `python test_pipeline.py` and uncomment start_loop()")
+    tester = PipelineTester(source=0, debug=True)
+    tester.start_loop() 
+    print("Script correctly generated. To test physically on your local OSX machine with a GUI, run: `python test_pipeline.py`")

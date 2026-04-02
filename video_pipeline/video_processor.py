@@ -50,6 +50,7 @@ class VideoProcessor:
         """
         # Step 1 & 2: Object Detection & Mesh Extraction (via MediaPipe natively)
         meshes = self.extractor.extract_multiple_meshes(frame)
+        self.last_mesh_count = len(meshes)
         
         # Convert raw meshes into pseudo-detections [x1, y1, x2, y2, score] for the Tracker
         original_bboxes = []
@@ -142,13 +143,21 @@ class VideoProcessor:
             cons = entity.get("consistency", 0)
             
             # Color formulation
+            status_text = "UNKNOWN"
             if status == "accepted":
                 color = (0, 255, 0) # Green (BGR OpenCV layout)
+                status_text = "MATCH"
             elif status == "warming_up":
                 color = (0, 165, 255) # Orange 
+                status_text = "BUFFERING"
+            elif status == "rejected_high_uncertainty":
+                color = (0, 165, 255) # Orange/Redish
+                identity = "Unknown"
+                status_text = "REJECTED (HIGH UNCERTAINTY)"
             else:
                 color = (0, 0, 255) # Red (rejected / unknown bounds)
                 identity = "Unknown"
+                status_text = "NO MATCH"
                 
             # 1. Bounding Box
             cv2.rectangle(out_frame, (x1, y1), (x2, y2), color, 2)
@@ -157,7 +166,8 @@ class VideoProcessor:
             font = cv2.FONT_HERSHEY_SIMPLEX
             
             # 2. Track ID banner above box
-            cv2.putText(out_frame, f"ID: {track_id} | {identity}", (x1, max(y1 - 10, 20)), font, 0.6, color, 2)
+            title = f"ID: {track_id} | {identity} | {status_text}"
+            cv2.putText(out_frame, title, (x1, max(y1 - 10, 20)), font, 0.6, color, 2)
             
             # 3. Floating Math Metrics mapping underneath the bounding box structurally
             metrics_y = y2 + 20

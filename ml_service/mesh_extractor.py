@@ -1,3 +1,8 @@
+import sys
+
+if sys.version_info < (3, 10):
+    raise RuntimeError("ERROR: This code requires Python 3.10+")
+
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -8,7 +13,6 @@ class MeshExtractor:
     Extracts the 3D face mesh (468 landmarks) from images or video frames using MediaPipe.
     """
     def __init__(self, static_image_mode: bool = False, max_num_faces: int = 1, min_detection_confidence: float = 0.5):
-        # MediaPipe >=0.10.x on Python 3.14 arm64 drops legacy solutions module
         try:
             self.mp_face_mesh = mp.solutions.face_mesh
             self.face_mesh = self.mp_face_mesh.FaceMesh(
@@ -19,9 +23,10 @@ class MeshExtractor:
                 min_tracking_confidence=0.5
             )
             self._use_mock = False
+            print("MediaPipe initialized successfully")
+            print("Using real mesh extraction")
         except AttributeError:
-            print("WARNING: mp.solutions missing. Using deterministic mock extraction for pipeline testing.")
-            self._use_mock = True
+            raise RuntimeError("ERROR: mediapipe.solutions not found. Pipeline requires real MediaPipe.")
 
     def extract_mesh(self, frame: np.ndarray) -> Optional[np.ndarray]:
         meshes = self.extract_multiple_meshes(frame)
