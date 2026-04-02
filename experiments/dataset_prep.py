@@ -5,85 +5,77 @@ from sklearn.datasets import fetch_lfw_people
 
 class DatasetPreparer:
     """
-    Downloads the LFW dataset and generates synthetic CCTV degradation analogs
-    required to validate the mathematical boundaries formulated in Phase 1 & 2.
+    Downloads LFW and generates dynamic structural bounds for testing.
+    Now structured for multi-severity levels.
     """
-    def __init__(self, output_dir: str = "dataset"):
+    def __init__(self, output_dir: str = "experiments/dataset"):
         self.output_dir = output_dir
-        self.paths = {
-            'original': os.path.join(output_dir, 'original'),
-            'blurred': os.path.join(output_dir, 'blurred'),
-            'low_light': os.path.join(output_dir, 'low_light'),
-            'noisy': os.path.join(output_dir, 'noisy'),
-            'occluded': os.path.join(output_dir, 'occluded')
+        self.severities = {
+            'blur': [5, 11, 21],
+            'noise': [10, 25, 40],
+            'low_light': [0.6, 0.4, 0.2],
+            'occlusion': [0.2, 0.4, 0.6]
         }
-        for path in self.paths.values():
-            os.makedirs(path, exist_ok=True)
+        
+        # Original clean baseline
+        os.makedirs(os.path.join(output_dir, 'original'), exist_ok=True)
+        
+        # Degradation severities
+        for deg, levels in self.severities.items():
+            for lvl in levels:
+                os.makedirs(os.path.join(output_dir, f"{deg}_{lvl}"), exist_ok=True)
 
-    def download_lfw(self, min_faces_per_person: int = 15):
-        """Fetches the LFW dataset via scikit-learn."""
-        print(f"Downloading/Loading LFW faces (min {min_faces_per_person} faces per person)...")
-        # color=True to get RGB images for MediaPipe
-        lfw_people = fetch_lfw_people(min_faces_per_person=min_faces_per_person, color=True, resize=1.0)
-        return lfw_people.images, lfw_people.target, lfw_people.target_names
+    def download_lfw(self, min_faces: int = 20):
+        print("Downloading LFW... (this may take a moment)")
+        lfw = fetch_lfw_people(min_faces_per_person=min_faces, color=True, resize=1.0)
+        return lfw.images, lfw.target, lfw.target_names
 
-    def apply_cctv_degradations(self, rgb_image_float: np.ndarray) -> dict:
-        """
-        Applies mathematical optical degradation mimicking real CCTV anomalies.
-        Inputs are normalized floats [0.0, 1.0] from sklearn.
-        Returns uint8 [0, 255] arrays.
-        """
-        # Convert to standard 8-bit OpenCV processing format
-        base_img = (rgb_image_float * 255).astype(np.uint8)
+    def apply_degradations_multi(self, rgb_float: np.ndarray) -> dict:
+        base_img = (rgb_float * 255).astype(np.uint8)
+        results = {'original': cv2.cvtColor(base_img, cv2.COLOR_RGB2BGR)}
         
-        # 1. Gaussian Blur: Simulates fundamentally misaligned lens focus or motion blur
-        blurred = cv2.GaussianBlur(base_img, (21, 21), 0)
-        
-        # 2. Low Light (Underexposed): Simulates terrible nighttime capture causing contrast collapse
-        low_light = cv2.convertScaleAbs(base_img, alpha=0.25, beta=0)
-        
-        # 3. Noise: Simulates sensor read noise and high ISO grain
-        noise_matrix = np.random.normal(0, 40, base_img.shape) # Gaussian noise, sigma=40
-        noisy = np.clip(base_img.astype(np.float32) + noise_matrix, 0, 255).astype(np.uint8)
-        
-        # 4. Partial Occlusion: Simulates physical obstruction (mask, scarf, random pole)
-        occluded = base_img.copy()
-        h, w = base_img.shape[:2]
-        # Drop a black mask over the jaw/mouth area (bottom third of the crop)
-        start_y = int(h * 0.6)
-        occluded[start_y:h, :] = 0
-        
-        # Convert RGB to BGR for standard cv2.imwrite compatibility
-        imgs = {
-            'original': cv2.cvtColor(base_img, cv2.COLOR_RGB2BGR),
-            'blurred': cv2.cvtColor(blurred, cv2.COLOR_RGB2BGR),
-            'low_light': cv2.cvtColor(low_light, cv2.COLOR_RGB2BGR),
-            'noisy': cv2.cvtColor(noisy, cv2.COLOR_RGB2BGR),
-            'occluded': cv2.cvtColor(occluded, cv2.COLOR_RGB2BGR)
-        }
-        return imgs
+        # Blur
+        for b in self.severities['blur']:
+            blurred = cv2.GaussianBlur(base_img, (b, b), 0)
+            results[f'blur_{b}'] = cv2.cvtColor(blurred, cv2.COLOR_RGB2BGR)
+            
+        # Low Light
+        for a in self.severities['low_light']:
+            low = cv2.convertScaleAbs(base_img, alpha=a, beta=0)
+            results[f'low_light_{a}'] = cv2.cvtColor(low, cv2.COLOR_RGB2BGR)
+            
+        # Noise
+        for n in self.severities['noise']:
+            noise_mat = np.random.normal(0, n, base_img.shape)
+            noisy = np.clip(base_img.astype(np.float32) + noise_mat, 0, 255).astype(np.uint8)
+            results[f'noise_{n}'] = cv2.cvtColor(noisy, cv2.COLOR_RGB2BGR)
+            
+        # Occlusion
+        for occ in self.severities['occlusion']:
+            occ_img = base_img.copy()
+            h, w = base_img.shape[:2]
+            start_y = int(h * (1.0 - occ))
+            occ_img[start_y:h, :] = 0
+            results[f'occlusion_{occ}'] = cv2.cvtColor(occ_img, cv2.COLOR_RGB2BGR)
+            
+        return results
 
-    def process_and_save(self, limit: int = 200):
-        """Processes the dataset and saves the generated augmentations to strictly partitioned folders."""
+    def process_and_save(self, limit: int = 150):
+        """Processes and writes to disk."""
         images, targets, target_names = self.download_lfw()
-        
-        # For experimental brevity, limit processing to N images if testing locally
         process_count = min(len(images), limit)
-        print(f"Applying CCTV topologies to {process_count} images...")
         
         for i in range(process_count):
             img_normalized = images[i]
             person_name = target_names[targets[i]].replace(' ', '_')
+            variants = self.apply_degradations_multi(img_normalized)
             
-            degraded_variants = self.apply_cctv_degradations(img_normalized)
-            
-            for deg_type, cv_img in degraded_variants.items():
-                filename = f"{person_name}_{i:04d}.jpg"
-                save_path = os.path.join(self.paths[deg_type], filename)
+            for deg_name, cv_img in variants.items():
+                save_path = os.path.join(self.output_dir, deg_name, f"{person_name}_{i:04d}.jpg")
                 cv2.imwrite(save_path, cv_img)
 
 if __name__ == "__main__":
-    preparer = DatasetPreparer(output_dir="experiments/dataset")
-    # Limiting to 50 for quick validation sequence, full dataset takes longer
-    preparer.process_and_save(limit=50)
-    print("Dataset generation finalized into /experiments/dataset/")
+    preparer = DatasetPreparer()
+    # Executing localized limit format for rapid test iteration compilation speed
+    preparer.process_and_save(limit=80) 
+    print("Multi-severity dataset finalized.")
